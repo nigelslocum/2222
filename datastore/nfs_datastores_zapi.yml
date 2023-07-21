@@ -1,0 +1,171 @@
+---
+# NetApp ONTAP create NFS VMware Datastores using ZAPI supported upto ONTAP 9.12.1
+# Can use REST version of snapmirror module to remove warning when ONTAP 9.11.1 is used
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ clustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    drlogin: &drlogin
+      hostname: "{{ drclustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    clustername: dm1ncp6000
+    username: admin
+    password: Netapp1!
+    drclustername: cluster0300
+    primary_svm: dm1nvp6001
+    datastore_name: d85pay_n_shared_sc2_r_common_03
+    snap_policy: sc2_snapshots_4min
+    comment: "common datastore for shared zone replicated"
+    esx_cluster: "d85pay01"
+    schedule: 30min
+    replicated_datastore: 'yes'
+  tasks:
+    - name: 'get aggregate info for primary cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        parameters:
+          space.block_storage.physical_used_percent: "<85"
+        fields:
+          - 'name'
+          - 'node.name'
+          - 'space.block_storage.available'
+      register: aggregate_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        aggregate_clean: "{{ aggregate_info | json_query(query_aggr_info) }}"
+      vars:
+        query_aggr_info: "ontap_info.storage_aggregates.records[*].{ name: name, node_name: node.name, space_available: space.block_storage.available }"
+    
+    - name: 'sort the aggr list by space_available'
+      set_fact:
+        aggregate: "{{ aggregate_clean | sort(attribute='space_available', reverse=true) }}"   
+
+    - name: Create NFS datastore volume for VMware
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ datastore_name }}"
+        vserver: "{{ primary_svm }}"
+        aggregate_name: "{{ aggregate[0].name }}"
+        size: 10
+        size_unit: tb
+        junction_path: "{{ '/' + datastore_name }}"
+        space_guarantee: none
+        tiering_policy: snapshot-only
+        volume_security_style: unix
+        percent_snapshot_space: 20
+        snapshot_policy: "{{ snap_policy }}"
+        comment: "{{ comment }}"
+        export_policy: "{{ esx_cluster }}_vmware" # assumes export policy already exists
+        <<: *login
+
+    - name: 'get aggr info for dr cluster'
+      na_ontap_rest_info:
+        <<: *drlogin
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        parameters:
+          space.block_storage.physical_used_percent: "<85"
+        fields:
+          - 'name'
+          - 'space.block_storage.available'
+      register: dr_aggregate_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        dr_aggregate_clean: "{{ dr_aggregate_info | json_query(query_dr_aggr_info) }}"
+      vars:
+        query_dr_aggr_info: "ontap_info.storage_aggregates.records[*].{ name: name, space_available: space.block_storage.available }"
+    
+    - name: 'sort the list by space_available'
+      set_fact:
+        dr_aggregate: "{{ dr_aggregate_clean | sort(attribute='space_available', reverse=true) }}"   
+
+    - name: 'get svm peer info from cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - svm/peers
+        parameters:
+          svm: "{{ primary_svm }}"
+        fields:
+          - peer.svm
+      register: svmpeer_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        dr_svm: "{{ svmpeer_info | json_query(query_svmpeer_info) }}"
+      vars:
+        query_svmpeer_info: "ontap_info.svm_peers.records[*].{ name: name }"
+
+    - name: Create snapmirror destination volume
+      when: replicated_datastore == 'yes'
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ datastore_name + '_m1' }}"
+        vserver: "{{ dr_svm[0].name }}"
+        aggregate_name: "{{ dr_aggregate[0].name }}"
+        size: 10
+        size_unit: tb
+        type: dp
+        space_guarantee: none
+        tiering_policy: all
+        comment: "{{ comment }}"
+        <<: *drlogin
+
+    - name: Create and initialise SnapMirror relationship
+      when: replicated_datastore == 'yes'
+      na_ontap_snapmirror:
+        use_rest: never
+        state: present
+        policy: MirrorLatest
+        initialize: true
+        source_path: "{{ primary_svm + ':' + datastore_name }}"
+        destination_path: "{{ dr_svm[0].name + ':' + datastore_name + '_m1' }}"
+        schedule: "{{ schedule }}"
+        <<: *drlogin
+
+    - name: 'get nfs IPs info from cluster for vmware inputs'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - network/ip/interfaces
+        parameters:
+          svm: "{{ primary_svm }}"
+          location.home_node.name: "{{ aggregate[0].node_name }}"
+          name: vnfs* 
+        fields:
+          - ip.address
+      register: nfs_ip_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        nfs_ip: "{{ nfs_ip_info | json_query(query_nfs_ip_info) }}"
+      vars:
+        query_nfs_ip_info: "ontap_info.network_ip_interfaces.records[*].{ name: name, ip: ip.address }"
+
+    - name: 'print nfs ip'   
+      debug:
+        msg: "{{ nfs_ip[0].ip }}"
+
+    - name: 'print nfs path'   
+      debug:
+        msg: "{{ '/' + datastore_name }}"

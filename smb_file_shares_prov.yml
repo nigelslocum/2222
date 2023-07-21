@@ -1,0 +1,145 @@
+---
+# NetApp ONTAP create SMB shares
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+#  vars_prompt:
+#    - name: username
+#      prompt: enter the username
+#      private: no
+#    - name: password
+#      prompt: enter password
+  vars:
+    login: &login
+      hostname: "{{ hostname }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_smb_file_shares.yml
+  tasks:
+    - name: Create SMB shares inc volume from application template
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ item.volume }}"
+        vserver: "{{ item.vserver }}"
+        size: "{{ item.size }}"
+        size_unit: "{{ item.size_unit }}"
+        junction_path: "{{ '/' + item.volume }}"
+        space_guarantee: none
+        tiering_policy: auto
+        volume_security_style: ntfs
+        percent_snapshot_space: 20
+        snapshot_policy: "{{ item.snap_policy }}"
+        comment: "{{ item.comment }}"
+        nas_application_template:
+          cifs_access:
+            - user_or_group: "Authenticated Users"
+        <<: *login
+      with_items: "{{ smb_file_shares }}"
+
+    - name: Create snapmirror destination volumes
+      when: item.dest_vserver is defined
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ item.volume + '_dest' }}"
+        vserver: "{{ item.dest_vserver }}"
+        aggregate_name: "{{ item.dest_aggr }}"
+        size: "{{ item.size }}"
+        size_unit: "{{ item.size_unit }}"
+        type: dp
+        space_guarantee: none
+        tiering_policy: all
+        comment: "{{ item.comment }}"
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ smb_file_shares }}"
+
+    - name: Create and initialise SnapMirror relationships
+      when: item.dest_vserver is defined
+      na_ontap_snapmirror:
+        use_rest: always
+        state: present
+        policy: "{{ item.protection_policy }}"
+        initialize: true
+        source_endpoint:
+          cluster: "{{ clustername }}"
+          path: "{{ item.vserver + ':' + item.volume }}"
+        destination_endpoint:
+           cluster: "{{ destclustername }}"
+           path: "{{ item.dest_vserver + ':' + item.volume + '_dest' }}"
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ smb_file_shares }}"
+
+    - name: mount destination volumes for access
+      when: item.dest_vserver is defined
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ item.volume + '_dest' }}"
+        vserver: "{{ item.dest_vserver }}"
+        junction_path: "{{ '/' + item.volume + '_dest' }}"
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ smb_file_shares }}"
+
+    - name: create SMB shares for mirrored volumes
+      when: item.dest_vserver is defined
+      na_ontap_cifs:
+        use_rest: always
+        state: present
+        share_name: "{{ item.volume }}"
+        vserver: "{{ item.dest_vserver }}"
+        path: "{{ '/' + item.volume + '_dest' }}"
+        show_snapshot: true
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ smb_file_shares }}"
+
+    - name: configure SMB permissions
+      when: item.dest_vserver is defined
+      na_ontap_cifs_acl:
+        use_rest: always
+        state: present
+        share_name: "{{ item.volume }}"
+        vserver: "{{ item.dest_vserver }}"
+        user_or_group: "Authenticated Users"
+        permission: "full_control"
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ smb_file_shares }}"
+
+    - name: remove everyone permission
+      when: item.dest_vserver is defined
+      na_ontap_cifs_acl:
+        use_rest: always
+        state: absent
+        share_name: "{{ item.volume }}"
+        vserver: "{{ item.dest_vserver }}"
+        user_or_group: "Everyone"
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ smb_file_shares }}"

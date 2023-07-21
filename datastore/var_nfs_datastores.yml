@@ -1,0 +1,12 @@
+# variables, one file per cluster
+# global vars
+hostname:  # initial cluster name
+clustername: # Cluster Name
+username: admin
+password: netapp123
+destclustername: 
+destclusterip: 
+
+nfs_datastores:
+- { vserver: volume: "d85poc_n_shared_sc2_r_common_01", aggr: "ssd_01_01", snap_policy: "sc2_snapshots_4min", comment: "common datastore", esx_cluster: "d85poc", dest_vserver: "", dest_aggr: "ssd_01_01", protection_policy: "MirrorAllSnapshots", schedule: 30min }
+#- { vserver: volume: "d85poc_n_shared_sc2_r_common_01", snap_policy: "sc2_snapshots_4min", comment: "common datastore", host_subnet: "192.168.73.0/24", dest_vserver: "", dest_aggr: "cluster0300_01_FC_1", protection_policy: "async_mirror_sc2" }

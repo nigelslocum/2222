@@ -1,0 +1,34 @@
+# global variables, one file per cluster
+hostname: 192.168.73.100 # initial cluster name
+username: admin
+password: Netapp1! # default password to be changed later
+clustername: "dm1ncp6000"
+ad_user: admin
+ad_password: Netapp1!
+destclustername: "cluster0300" # for SVM peerinng
+destclusterip: "192.168.73.220" # for SVM peering
+
+# module specific variables
+svm:
+- { name: dm1nvp6001, cifs_allowed: false, nfs_allowed: true, nfs_enabled: true, iscsi_allowed: true, iscsi_enabled: true, comment: VMware mgmt zone SVM }
+- { name: dm1nfp6001, cifs_allowed: true, nfs_allowed: true, nfs_enabled: true, iscsi_allowed: false, iscsi_enabled: false, comment: NAS mgmt zone SVM }
+
+mgmt_lif:
+- { vserver: dm1nfp6001, name: dm1nfp6001_mgmt, home_port: a0a-10, home_node: dm1ncp6001, address: 192.168.73.106, netmask: 255.255.255.0, }
+
+nas_lif:
+- { vserver: dm1nvp6001, name: vnfs_01_01, home_port: a0a-10, home_node: dm1ncp6001, address: 192.168.73.104, netmask: 255.255.255.0, }
+- { vserver: dm1nfp6001, name: cifs_01_01, home_port: e0c, home_node: dm1ncp6001, address: 192.168.73.105, netmask: 255.255.255.0, }
+
+san_lif:
+- { vserver: dm1nvp6001, name: iscsi_01_01, home_port: e0c, home_node: dm1ncp6001, address: 192.168.73.50, netmask: 255.255.255.0 }
+
+nas_svm_config: #first vserver is the domain_tunnel
+- { vserver: dm1nfp6001, domain: domain.local, nameservers: '192.168.73.10,192.168.73.11', aggr: dm1ncp6001_FC_1, ls_aggr: dm1ncp6001_FC_1, gateway: "192.168.73.1"}
+
+vmware_svm_config:
+- { vserver: dm1nvp6001, chap_user: dm1_chap, chap_password: chappassword, address_range: "192.168.73.1-192.168.73.254" }
+
+svm_peers: # list all SVMs that have replicated volumes here
+- { vserver: dm1nvp6001, peer_cluster: cluster0300, peer_vserver: siedxxnvp0320 }
+- { vserver: dm1nfp6001, peer_cluster: cluster0300, peer_vserver: siedxxnfp0320 }

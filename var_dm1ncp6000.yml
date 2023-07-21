@@ -1,0 +1,68 @@
+# variables, one file per cluster
+hostname: 192.168.73.100 # initial cluster name
+username: admin
+password: Netapp1! # default password to be changed later
+clustername: dm1ncp6000 # Cluster Name
+node1name: dm1ncp6001
+node2name: dm1ncp6002
+ntpservers: 192.168.73.2 # Time Server
+timezone: Australia/Canberra
+cluster_contact: "IT Support"
+cluster_location: "datacenter 1"
+domain: domain.local
+nameservers: 192.168.73.10,192.168.73.11
+peer_cluster_mgmt_ip: 192.168.73.220
+peer_cluster_ic_ips: 192.168.73.238
+login_banner: "this is a login banner, please edit"
+node_names:
+- { oldname: dm1ncp6000-01, newname: dm1ncp6001 }
+- { oldname: dm1ncp6000-02, newname: dm1ncp6002 }
+
+node_lifs:
+- { node_lif_old: dm1ncp6000-01_mgmt1, node_lif: dm1ncp6001_mgmt1 }
+
+licenses:
+- SMKQROWJNQYQSDAAAAAAAAAAAAAA
+- YVUCRRRRYVHXCFABGAAAAAAAAAAA
+- SOHOURRRYVHXCFABGAAAAAAAAAAA
+- KQSRRRRRYVHXCFABGAAAAAAAAAAA
+- MBXNQRRRYVHXCFABGAAAAAAAAAAA
+- GUJZTRRRYVHXCFABGAAAAAAAAAAA
+- UZLKTRRRYVHXCFABGAAAAAAAAAAA
+- EJFDVRRRYVHXCFABGAAAAAAAAAAA
+
+security_groups:
+  - { name: domain\rol-g-sddc-netapp-admins, applications: 'ssh,http,ontapi', authentication_method: domain, role: admin }
+  - { name: domain\rol-g-sddc-netapp-viewers, applications: 'ssh,http,ontapi', authentication_method: domain, role: readonly }
+
+log_forwarding:
+  - { destination: 192.168.73.100, port: 514, protocol: tcp_encrypted }
+
+autosupport:
+  - { node: dm1ncp6001, mailhosts: 192.168.73.11, fromaddress: dm1ncp6001@netapp.com, toaddress: nigel.slocum@netapp.com, transport: https, }
+  - { node: siedxxncp0102, mailhosts: 192.168.73.10, fromaddress: cluster0100@netapp.com, noteto: nigel.slocum@netapp.com }
+
+broadcast_domains: # define all broadcast domains here
+  - { broadcastdomain: a0a-10, mtu: 1500, ipspace: Default }
+  - { broadcastdomain: a0b-11, mtu: 1500, ipspace: Default }  
+
+ifgrp_configuration:
+  - { distribution_function: ip, ports: 'e0e,e0d', mode: singlemode, node: dm1ncp6001 }
+  - { distribution_function: ip, ports: 'e0f,e0g', mode: singlemode, node: dm1ncp6001 }
+
+vlans: # each VLAN uses own broadcast domain
+  - { node: dm1ncp6001, vlanid: 10, port: a0a, broadcast_domain: a0a-10 }
+  - { node: dm1ncp6001, vlanid: 11, port: a0b, broadcast_domain: a0b-11 }
+
+schedules:
+  - { name: 15min, job_minutes: 00,15,30,45, job_hours: 1, job_days_of_month: -1, job_months: -1 }
+  - { name: 4min, job_minutes: 00,15,30,45, job_hours: 1, job_days_of_month: -1, job_months: -1 }
+  - { name: 9min, job_minutes: 00,15,30,45, job_hours: 1, job_days_of_month: -1, job_months: -1 }
+  - { name: 4hour, job_minutes: 05, job_hours: "4,8,12,16,20,00", job_days_of_month: -1, job_months: -1 }
+
+snapshot_policies:
+  - { name: sc2_snapshots_4min, schedule: 4min, count: 14 }
+  - { name: sc3_snapshots_9min, schedule: 9min, count: 14 }
+
+intercluster_lifs:
+  - { lif_name: ic_01_01, home_port: e0c, home_node: dm1ncp6001, address: 192.168.73.102, netmask: 255.255.255.0, gateway: 192.168.73.1, destination: 192.168.73.0/24 }

@@ -1,0 +1,92 @@
+---
+# NetApp ONTAP create NFS VMware Datastores using ZAPI supported upto ONTAP 9.12.1
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ clustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    drlogin: &drlogin
+      hostname: "{{ drclustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    clustername: dm1ncp6000
+    username: admin
+    password: Netapp1!
+    drclustername: cluster0300
+    primary_svm: dm1nvp6001
+    datastore_name: d85pay_n_shared_sc2_r_common_02
+    snap_policy: sc2_snapshots_4min
+    comment: "common datastore for shared zone replicated"
+    esx_cluster: "d85pay01"
+    dr_svm: siedxxnvp0320 # get SVM peers from ontap_info and use as var
+    schedule: 30min
+    replicated_datastore: 'yes' # instead of this, could search datastore_name for value _r_
+  tasks:
+    - name: 'get aggregate info for primary cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        parameters:
+          space.block_storage.physical_used_percent: "<85"
+        fields:
+          - 'name'
+          - 'node.name'
+          - 'space.block_storage.available'
+      register: aggregate_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        aggregate_clean: "{{ aggregate_info | json_query(query_aggr_info) }}"
+      vars:
+        query_aggr_info: "ontap_info.storage_aggregates.records[*].{ name: name, node_name: node.name, space_available: space.block_storage.available }"
+
+    - name: 'sort the aggr list by space_available'
+      set_fact:
+        aggregate: "{{ aggregate_clean | sort(attribute='space_available', reverse=true) }}"
+
+    - name: 'print sorted list only node name'   
+      debug:
+        msg: "{{ aggregate[0].node_name }}"
+
+# get NFS IPs
+    - name: 'get nfs IPs info from cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - network/ip/interfaces
+        parameters:
+          svm: "{{ primary_svm }}"
+          location.home_node.name: "{{ aggregate[0].node_name }}"
+          name: vnfs* 
+        fields:
+          - ip.address
+      register: nfs_ip_info
+
+    - name: 'print nfs_ip_info'   
+      debug:
+        msg: "{{ nfs_ip_info }}"
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        nfs_ip: "{{ nfs_ip_info | json_query(query_nfs_ip_info) }}"
+      vars:
+        query_nfs_ip_info: "ontap_info.network_ip_interfaces.records[*].{ name: name, ip: ip.address }"
+
+    - name: 'print nfs ip'   
+      debug:
+        msg: "{{ nfs_ip[0].ip }}"
+
+    - name: 'print nfs path'   
+      debug:
+        msg: "{{ '/' + datastore_name }}"

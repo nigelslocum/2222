@@ -1,0 +1,5 @@
+# datastore variables file, one file per cluster
+hostname: 192.168.73.210 # initial cluster name
+
+datastores:
+- { svm: "IT Support", aggr: "siedxxncp0201_FC_1", volume: "Canberra DC1", snapshot_policy: "default", vsphere_cluster: "cluster1" }

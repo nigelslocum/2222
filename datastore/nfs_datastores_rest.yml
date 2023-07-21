@@ -1,0 +1,91 @@
+---
+# NetApp ONTAP create NFS VMware Datastores using REST upto 9.10
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ clustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    clustername: dm1ncp6000
+    username: admin
+    password: Netapp1!
+    destclustername: cluster0300
+    primary_svm: dm1nvp6001
+    aggr: dm1ncp6001_FC_1
+    datastore_name: d85pay_n_shared_sc2_r_common_01
+    snap_policy: sc2_snapshots_4min
+    comment: "common datastore for shared zone replicated"
+    esx_cluster: "d85pay01"
+    dr_svm: siedxxnvp0320
+    dr_aggr: cluster0300_01_FC_1
+    schedule: 30min
+  tasks:
+    - name: Create NFS datastore volume for VMware
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ datastore_name }}"
+        vserver: "{{ primary_svm }}"
+        aggregate_name: "{{ aggr }}"
+        size: 10
+        size_unit: tb
+        junction_path: "{{ '/' + datastore_name }}"
+        space_guarantee: none
+        tiering_policy: snapshot-only
+        volume_security_style: unix
+        percent_snapshot_space: 20
+        snapshot_policy: "{{ snap_policy }}"
+        comment: "{{ comment }}"
+        export_policy: "{{ esx_cluster }}_vmware" # assumes export policy already exists
+        <<: *login
+
+    - name: Create snapmirror destination volumes
+#      when: dr_svm is defined
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ datastore_name + '_m1' }}"
+        vserver: "{{ dr_svm }}"
+        aggregate_name: "{{ dr_aggr }}"
+        size: 10
+        size_unit: tb
+        type: dp
+        space_guarantee: none
+        tiering_policy: all
+        comment: "{{ comment }}"
+        hostname: "{{ destclustername }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+
+    - name: Create and initialise SnapMirror relationships
+#      when: dr_svm is defined
+      na_ontap_snapmirror:
+        use_rest: always
+        state: present
+        policy: MirrorAllSnapshots
+        initialize: true
+        source_endpoint:  ###### this option requires ONTAP 9.11
+          cluster: "{{ clustername }}"
+          path: "{{ primary_svm + ':' + datastore_name }}"
+#        source_cluster: "{{ clustername }}"
+#        source_path: "{{ item.vserver + ':' + item.volume }}"
+        destination_endpoint:
+           cluster: "{{ destclustername }}"
+           path: "{{ dr_svm + ':' + datastore_name + '_m1' }}"
+#        destination_cluster: "{{ destclustername }}"
+#        destination_path: "{{ dr_svm + ':' + datastore_name + '_m1' }}"
+        schedule: "{{ schedule }}"
+        peer_options: 
+          hostname: "{{ destclustername }}"
+          username: "{{ username }}"
+          password: "{{ password }}"
+          https: true
+          validate_certs: false
+        <<: *login

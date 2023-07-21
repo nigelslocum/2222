@@ -1,0 +1,31 @@
+---
+# NetApp Cluster System Setup
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ hostname }}" # NetApp Cluster IP
+      username: "{{ username }}" # Cluster User
+      password: "{{ password }}" # Cluster Password
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_svm_prov.yml
+  tasks:
+    - name: create SVM peers with DR site
+      netapp.ontap.na_ontap_vserver_peer:
+        state: present
+        vserver: "{{ item.vserver }}"
+        peer_vserver: "{{ item.peer_vserver }}"
+        peer_cluster: "{{ item.peer_cluster }}"
+        applications: snapmirror
+        peer_options:
+          hostname: "{{ destclusterip }}"
+          username: "{{ username }}"
+          password: "{{ password }}"
+          https: true
+          validate_certs: false
+        <<: *login
+      with_items: "{{ svm_peers }}"

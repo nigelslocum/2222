@@ -1,0 +1,82 @@
+---
+# NetApp ONTAP create NFS VMware Datastores using ZAPI supported upto ONTAP 9.12.1
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ clustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    clustername: dm1ncp6000
+    username: admin
+    password: Netapp1!
+    drclustername: cluster0300
+    primary_svm: dm1nvp6001
+#    aggr: dm1ncp6001_FC_1 # get aggrs from ontap_info for var
+    datastore_name: d85pay_n_shared_sc2_r_common_02
+    snap_policy: sc2_snapshots_4min
+    comment: "common datastore for shared zone replicated"
+    esx_cluster: "d85pay01"
+    dr_svm: siedxxnvp0320 # get SVM peers from ontap_info and use as var
+    dr_aggr: cluster0300_01_FC_1
+    schedule: 30min
+    replicated_datastore: 'yes' # instead of this, could search datastore_name for value _r_
+  tasks:
+  tasks:
+    - name: 'get ontap info for primary cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        parameters:
+          space.block_storage.physical_used_percent: "<85"        
+        fields:
+          - 'name'
+          - 'space.block_storage.available'
+      register: aggregate_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        aggregate_clean: "{{ aggregate_info | json_query(jmespath_expression) }}"
+      vars:
+        jmespath_expression: "ontap_info.storage_aggregates.records[*].{ name: name, space_available: space.block_storage.available }"
+    
+    - name: 'print aggregate_info'   
+      debug:
+        msg: "{{ aggregate_clean }}"
+
+    - name: 'sort the list by space_available'
+      set_fact:
+        aggregate_sorted: "{{ aggregate_clean | sort(attribute='space_available', reverse=true) }}"   
+
+    - name: 'print aggregate_sorted'   
+      debug:
+        msg: "{{ aggregate_sorted }}"
+
+    - name: 'print least_full_aggregate'   
+      debug:
+        msg: "{{ aggregate_sorted[0].name }}"
+
+    - name: Create NFS datastore volume for VMware
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ datastore_name }}"
+        vserver: "{{ primary_svm }}"
+        aggregate_name: "{{ aggregate_sorted[0].name }}"
+        size: 10
+        size_unit: tb
+        junction_path: "{{ '/' + datastore_name }}"
+        space_guarantee: none
+        tiering_policy: snapshot-only
+        volume_security_style: unix
+        percent_snapshot_space: 20
+        snapshot_policy: "{{ snap_policy }}"
+        comment: "{{ comment }}"
+        export_policy: "{{ esx_cluster }}_vmware" # assumes export policy already exists
+        <<: *login

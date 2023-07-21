@@ -1,0 +1,53 @@
+---
+# NetApp ONTAP create NFS VMware Datastores using ZAPI supported upto ONTAP 9.12.1
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ clustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    drlogin: &drlogin
+      hostname: "{{ drclustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    clustername: dm1ncp6000
+    username: admin
+    password: Netapp1!
+    drclustername: cluster0300
+    primary_svm: dm1nvp6001
+    datastore_name: d85pay_n_shared_sc2_r_common_02
+    snap_policy: sc2_snapshots_4min
+    comment: "common datastore for shared zone replicated"
+    esx_cluster: "d85pay01"
+    dr_svm: siedxxnvp0320 # get SVM peers from ontap_info and use as var
+    schedule: 30min
+    replicated_datastore: 'yes' # instead of this, could search datastore_name for value _r_
+  tasks:
+    - name: 'get svm peer info from cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - svm/peers
+        parameters:
+          svm: "{{ primary_svm }}"
+        fields:
+          - peer.svm
+      register: svmpeer_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        dr_svm: "{{ svmpeer_info | json_query(jmespath_expression) }}"
+      vars:
+        jmespath_expression: "ontap_info.svm_peers.records[*].{ name: name }"
+
+    - name: 'print drsvm'   
+      debug:
+        msg: "{{ dr_svm }}"

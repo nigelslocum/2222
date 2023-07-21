@@ -1,0 +1,60 @@
+---
+# NetApp ONTAP create NFS VMware Datastores using ZAPI supported upto ONTAP 9.12.1
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars:
+    login: &login
+      hostname: "{{ clustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    drlogin: &drlogin
+      hostname: "{{ drclustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    clustername: dm1ncp6000
+    username: admin
+    password: Netapp1!
+    drclustername: cluster0300
+    primary_svm: dm1nvp6001
+#    aggr: dm1ncp6001_FC_1 # get aggrs from ontap_info for var
+    datastore_name: d85pay_n_shared_sc2_r_common_02
+    snap_policy: sc2_snapshots_4min
+    comment: "common datastore for shared zone replicated"
+    esx_cluster: "d85pay01"
+    dr_svm: siedxxnvp0320 # get SVM peers from ontap_info and use as var
+    dr_aggr: cluster0300_01_FC_1
+    schedule: 30min
+    replicated_datastore: 'yes' # instead of this, could search datastore_name for value _r_
+  tasks:
+    - name: 'get aggr ontap info for dr cluster'
+      na_ontap_rest_info:
+        <<: *drlogin
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        parameters:
+          space.block_storage.physical_used_percent: "<85"
+        fields:
+          - 'name'
+          - 'space.block_storage.available'
+      register: draggregate_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        draggregate_clean: "{{ draggregate_info | json_query(jmespath_expression) }}"
+      vars:
+        jmespath_expression: "ontap_info.storage_aggregates.records[*].{ name: name, space_available: space.block_storage.available }"
+    
+    - name: 'sort the list by space_available'
+      set_fact:
+        draggregate_sorted: "{{ draggregate_clean | sort(attribute='space_available', reverse=true) }}"   
+
+    - name: 'print least_full_aggregate'   
+      debug:
+        msg: "{{ draggregate_sorted[0].name }}"

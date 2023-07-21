@@ -1,0 +1,231 @@
+---
+#before running this playbook the following configuration must be performed to ensure access to cluster management LIF is possible.
+# NetApp Cluster System Setup
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+  vars_prompt:
+#    - name: username
+#      prompt: enter the username
+#      private: no
+#    - name: password
+#      prompt: enter password
+  vars:
+    login: &login
+      hostname: "{{ hostname }}" # NetApp Cluster IP
+      username: "{{ username }}" # Cluster User
+      password: "{{ password }}" # Cluster Password
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_dm1ncp6000.yml
+  tasks:
+    - name: Configure Cluster 
+      na_ontap_cluster:
+        use_rest: always
+        state: present
+        cluster_name: "{{ clustername }}"
+        cluster_contact: "{{ cluster_contact }}"
+        cluster_location: "{{ cluster_location }}"
+        timezone:
+          name: "{{ timezone }}"        
+        <<: *login
+
+    - name: Rename Nodes
+      na_ontap_node:
+        use_rest: never
+        from_name: "{{ item.oldname }}"
+        name: "{{ item.newname }}"
+        <<: *login
+      with_items: "{{ node_names }}"
+
+    - name: Login Banner
+      na_ontap_login_messages:
+        use_rest: never
+        vserver: "{{ clustername }}"
+        banner: "{{ login_banner }}"
+        <<: *login
+
+    - name: Rename cluster_mgmt LIF
+      ignore_errors: yes
+      na_ontap_interface:
+        use_rest: never
+        state: present
+        vserver: "{{ clustername }}"
+        from_name: "cluster_mgmt"
+        interface_name: "{{ clustername + '_mgmt' }}"
+        <<: *login
+
+    - name: Rename node mgmt LIFs
+      ignore_errors: yes
+      na_ontap_interface:
+        use_rest: never
+        state: present
+        vserver: "{{ clustername }}"
+        from_name: "{{ item.node_lif_old }}"
+        interface_name: "{{ item.node_lif }}"
+        <<: *login
+      with_items: "{{ node_lifs }}"
+
+    - name: Install Licenses
+      na_ontap_license:
+        state: present
+        license_codes: "{{ item }}"
+        <<: *login
+      with_items: "{{ licenses }}"
+
+
+    - name: Set NTP
+      ignore_errors: yes      
+      na_ontap_ntp:
+        state: present
+        version: auto
+        server_name: "{{ ntpservers }}"
+        <<: *login
+
+    -  name: Configure DNS
+       na_ontap_dns:
+        state: present
+        vserver: "{{ clustername }}"
+        domains: "{{ domain }}"
+        nameservers: "{{ nameservers }}"
+        skip_validation: true
+        <<: *login
+
+    - name: Create security groups
+      na_ontap_user:
+        state: present
+        name: '{{ item.name }}'
+        applications: '{{ item.applications }}'
+        authentication_method: '{{ item.authentication_method }}'
+        role_name: '{{ item.role }}'
+        vserver: "{{ clustername }}"
+        <<: *login
+      with_items: '{{ security_groups }}'
+
+    - name: Configure log forwarding to splunk
+      na_ontap_log_forward:
+        state: present
+        destination: '{{ item.destination }}'
+        port: '{{ item.port }}'
+        protocol: '{{ item.protocol }}'
+        force: yes
+        <<: *login
+      with_items: '{{ log_forwarding }}'
+
+    - name: Enable CDP
+      na_ontap_command:
+        command: ['node run -node * options cdpd.enable on']
+        privilege: admin
+        <<: *login
+
+    - name: create broadcast domain
+      na_ontap_broadcast_domain:
+        state: present
+        name: '{{ item.broadcastdomain }}'
+        mtu: '{{ item.mtu }}'
+        ipspace: '{{ item.ipspace }}'
+        <<: *login
+      with_items: "{{ broadcast_domains }}"
+
+    - name: Create Interface Groups
+      na_ontap_net_ifgrp:
+        state: present
+        distribution_function: '{{ item.distribution_function }}'
+        ports: '{{ item.ports }}'
+        mode: '{{ item.mode }}'
+        node: '{{ item.node}}'
+        <<: *login
+      with_items: '{{ ifgrp_configuration  }}'
+      when: ifgrp_configuration is defined and ifgrp_configuration != None
+      
+    - name: Create VLANs
+      na_ontap_net_vlan:
+        state: present
+        vlanid: '{{ item.vlanid }}'
+        node: '{{ item.node }}'
+        parent_interface: '{{ item.port }}'
+        broadcast_domain: "{{ item.broadcast_domain }}"
+        ipspace: 'Default'
+        enabled: true
+        <<: *login
+      with_items: '{{ vlans }}'
+      when: vlans is defined and vlans != None
+ 
+    - name: Create intercluster interface
+      netapp.ontap.na_ontap_interface:
+        use_rest: always
+        state: present
+        interface_name: '{{ item.lif_name }}'
+        home_port: '{{ item.home_port }}'
+        home_node: '{{ item.home_node }}'
+        service_policy: default-intercluster
+        address: '{{ item.address }}'
+        netmask: '{{ item.netmask }}'
+        ipspace: Default
+        admin_status: up
+        is_auto_revert: true
+        <<: *login
+      with_items: "{{ intercluster_lifs }}"
+
+    - name: create intercluster route
+      na_ontap_net_routes:
+        state: present
+        destination: "{{ item.destination }}"
+        gateway: "{{ item.gateway }}"
+        <<: *login
+      with_items: "{{ intercluster_lifs }}"
+
+    - name: Create cluster peer
+      netapp.ontap.na_ontap_cluster_peer:
+        use_rest: always
+        state: present
+        source_intercluster_lifs: "{{ item.address }}"
+        dest_intercluster_lifs: "{{ peer_cluster_ic_ips }}"
+        passphrase: "{{ password }}"
+        peer_options:
+          hostname: "{{ peer_cluster_mgmt_ip }}"
+        encryption_protocol_proposed: tls_psk
+        <<: *login
+      with_items: "{{ intercluster_lifs }}"
+ 
+    - name: Create Aggregates based on recommended layout (ONTAP API)
+      netapp.ontap.na_ontap_restit:
+        api: /storage/aggregates
+        method: POST
+        <<: *login
+      ignore_errors: true
+
+    - name: disable Autosupport
+      netapp.ontap.na_ontap_autosupport:
+        use_rest: never
+        state: absent
+        node_name: "{{ item.node }}"
+#        mail_hosts: "{{ item.mailhosts }}"
+#        from_address: "{{ item.fromaddress }}"
+#        to_addresses: "{{ item.toaddress }}"
+#        support: False
+        <<: *login
+      with_items: "{{ autosupport }}"
+
+    - name: create job schedules
+      netapp.ontap.na_ontap_job_schedule:
+        state: present
+        name: "{{ item.name }}"
+        job_minutes: "{{ item.job_minutes }}"
+        job_hours: "{{ item.job_hours }}"
+        job_days_of_month: "{{ item.job_days_of_month }}"
+        job_months: "{{ item.job_months }}"      
+        <<: *login
+      with_items: "{{ schedules }}"
+
+    - name: create snapshot policies
+      na_ontap_snapshot_policy:
+        state: present
+        name: "{{ item.name }}"
+        schedule: "{{ item.schedule }}"
+        count: "{{ item.count }}"
+        enabled: True
+        <<: *login
+      with_items: "{{ snapshot_policies }}"

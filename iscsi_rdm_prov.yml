@@ -1,0 +1,112 @@
+---
+# NetApp ONTAP create iSCSI RDMs for VMware
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+#  vars_prompt:
+#    - name: username
+#      prompt: enter the username
+#      private: no
+#    - name: password
+#      prompt: enter password
+  vars:
+    login: &login
+      hostname: "{{ hostname }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_iscsi_rdms.yml
+  tasks:
+    - name: Create volumes to host LUNs
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ item.lun_name }}"
+        vserver: "{{ item.vserver }}"
+        aggregate_name: "{{ item.aggr }}"
+        size: "{{ item.lun_size * 2 }}"
+        size_unit: "{{ item.lun_size_unit }}"
+        space_guarantee: none
+        tiering_policy: none
+        percent_snapshot_space: 0
+        <<: *login        
+      with_items: "{{ iscsi_luns }}"
+
+    - name: create LUNs
+      na_ontap_lun:
+        use_rest: always
+        state: present
+        name: "{{ item.lun_name }}"
+        flexvol_name: "{{ item.lun_name }}"
+        vserver: "{{ item.vserver }}"
+        size: "{{ item.lun_size }}"
+        size_unit: "{{ item.lun_size_unit }}"
+        os_type: vmware
+        space_reserve: false
+        <<: *login        
+      with_items: "{{ iscsi_luns }}"
+
+    - name: create igroup
+      na_ontap_igroup:
+        use_rest: always
+        state: present
+        vserver: "{{ item.vserver }}"
+        name: "{{ 'vmware_' + item.esx_cluster }}"
+        initiator_group_type: iscsi
+        os_type: vmware
+        initiator_names: "{{ item.iqn_names }}"
+        <<: *login        
+      with_items: "{{ iscsi_luns }}"
+
+    - name: map LUNs to igroup
+      na_ontap_lun_map:
+        use_rest: always
+        state: present
+        vserver: "{{ item.vserver }}"
+        initiator_group_name: "{{ 'vmware_' + item.esx_cluster }}"
+        path: "{{ '/vol/' + item.lun_name + '/' + item.lun_name }}"
+        <<: *login        
+      with_items: "{{ iscsi_luns }}"
+
+    - name: Create snapmirror destination volumes
+      when: item.dest_vserver is defined
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ item.lun_name + '_dest' }}"
+        vserver: "{{ item.dest_vserver }}"
+        aggregate_name: "{{ item.dest_aggr }}"
+        size: "{{ item.lun_size * 2 }}"
+        size_unit: "{{ item.lun_size_unit }}"
+        type: dp
+        space_guarantee: none
+        tiering_policy: all
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ iscsi_luns }}"
+
+    - name: Create and initialise SnapMirror relationships
+      when: item.dest_vserver is defined
+      na_ontap_snapmirror:
+        use_rest: always
+        state: present
+        policy: "{{ item.protection_policy }}"
+        initialize: true
+        source_endpoint:
+          cluster: "{{ clustername }}"
+          path: "{{ item.vserver + ':' + item.lun_name }}"
+        destination_endpoint:
+           cluster: "{{ destclustername }}"
+           path: "{{ item.dest_vserver + ':' + item.lun_name + '_dest' }}"
+        hostname: "{{ destclusterip }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        https: true
+        validate_certs: false
+      with_items: "{{ iscsi_luns }}"

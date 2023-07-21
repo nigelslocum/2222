@@ -1,0 +1,241 @@
+---
+# NetApp Cluster SVM Creation
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+#  vars_prompt:
+#    - name: username
+#      prompt: enter username
+#      private: no
+#    - name: password
+#      prompt: enter password
+#    - name: ad_user
+#      prompt: enter AD username
+#      private: no
+#    - name: ad_password
+#      prompt: enter AD password
+  vars:
+    login: &login
+      hostname: "{{ hostname }}" # NetApp Cluster IP
+      username: "{{ username }}" # Cluster User
+      password: "{{ password }}" # Cluster Password
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_svm_prov.yml
+  tasks:
+    - name: Create SVMs
+      na_ontap_svm:
+        use_rest: always
+        state: present
+        name: "{{ item.name }}"
+        comment: "{{ item.comment }}"
+        snapshot_policy: default
+        services:
+          cifs:
+            allowed: "{{ item.cifs_allowed }}"
+          nfs:
+            allowed: "{{ item.nfs_allowed }}"
+            enabled: "{{ item.nfs_enabled }}"
+          iscsi:
+            allowed: "{{ item.iscsi_allowed }}"
+            enabled: "{{ item.iscsi_enabled }}"
+          fcp:
+            allowed: false
+          nvme:
+            allowed: false
+        <<: *login
+      with_items: "{{ svm }}"
+
+    - name: Create SVM mgmt LIFs
+      na_ontap_interface:
+        use_rest: always
+        state: present
+        interface_name: "{{ item.name }}"
+        home_port: "{{ item.home_port }}"
+        home_node: "{{ item.home_node }}"
+        failover_scope: broadcast_domain_only
+        service_policy: default-management
+        interface_type: ip
+        address: "{{ item.address }}"
+        netmask: "{{ item.netmask }}"
+        admin_status: up
+        vserver: "{{ item.vserver }}"
+        <<: *login
+      with_items: "{{ mgmt_lif }}"
+      
+    - name: Create NAS LIFs
+      na_ontap_interface:
+        use_rest: always
+        state: present
+        interface_name: "{{ item.name }}"
+        home_port: "{{ item.home_port }}"
+        home_node: "{{ item.home_node }}"
+        failover_policy: broadcast-domain-wide
+        is_auto_revert: true
+        protocols: "nfs,cifs"
+        role: data
+        interface_type: "ip"
+        address: "{{ item.address }}"
+        netmask: "{{ item.netmask }}"
+        admin_status: up
+        vserver: "{{ item.vserver }}"
+        <<: *login
+      with_items: "{{ nas_lif }}"
+
+    - name: Create iSCSI LIFs
+      na_ontap_interface:
+        use_rest: always
+        state: present
+        interface_name: "{{ item.name }}"
+        home_port: "{{ item.home_port }}"
+        home_node: "{{ item.home_node }}"
+        service_policy: default-data-iscsi
+        address: "{{ item.address }}"
+        netmask: "{{ item.netmask }}"
+        admin_status: up
+        vserver: "{{ item.vserver }}"
+        <<: *login
+      with_items: "{{ san_lif }}"
+
+    - name: create routes 
+      netapp.ontap.na_ontap_net_routes:
+        state: present
+        vserver: "{{ item.vserver }}"
+        destination: "0.0.0.0/0"
+        gateway: "{{ item.gateway }}"
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: add NFS rule to default policy for VMware SVM
+      na_ontap_export_policy_rule:
+        state: present
+        name: default
+        vserver: "{{ item.vserver }}"
+        client_match: 0.0.0.0/0
+        ro_rule: sys
+        rw_rule: never
+        protocol: nfs
+        super_user_security: sys
+        <<: *login
+      with_items: "{{ vmware_svm_config }}"
+
+    - name: add NFS rule to default policy for NAS SVM
+      na_ontap_export_policy_rule:
+        state: present
+        name: default
+        vserver: "{{ item.vserver }}"
+        client_match: 0.0.0.0/0
+        ro_rule: any
+        rw_rule: never
+        protocol: nfs
+        super_user_security: never
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: add DNS settings to NAS SVMs
+      na_ontap_dns:
+        state: present
+        vserver: "{{ item.vserver }}"
+        domains: "{{ item.domain }}"
+        nameservers: "{{ item.nameservers }}"
+        skip_validation: true
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: enable vstorage for VMware SVMs
+      na_ontap_nfs:
+        state: present
+        vserver: "{{ item.vserver }}"
+        vstorage_state: enabled
+        <<: *login
+      with_items: "{{ vmware_svm_config }}"
+
+    - name: create iscsi service
+      na_ontap_command:
+        command: ["iscsi create -vserver {{ item.vserver }} -target-name iqn.1992-08.com.netapp:{{ item.vserver }}"]
+        privilege: advanced
+        <<: *login
+      with_items: "{{ vmware_svm_config }}"
+
+    - name: Create LS mirror FlexVol
+      ignore_errors: true
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ item.vserver + '_ls' }}"
+        aggregate_name: "{{ item.ls_aggr }}"
+        size: 1
+        size_unit: gb
+        space_guarantee: volume
+        tiering_policy: none
+        vserver: "{{ item.vserver }}"
+        type: dp
+        wait_for_completion: True
+        comment: load-sharing mirror destination
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: create LS mirror for NAS SVMs
+      na_ontap_snapmirror:
+        state: present
+        source_vserver: "{{ item.vserver }}"
+        source_volume: "{{ item.vserver + '_root' }}"
+        destination_vserver: "{{ item.vserver }}"
+        destination_volume: "{{ item.vserver + '_ls' }}"
+        initialize: true
+        relationship_type: load_sharing
+        schedule: 10min
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: create CIFS server
+      ignore_errors: true
+      na_ontap_cifs_server:
+        state: present
+        name: "{{ item.vserver }}"
+        vserver: "{{ item.vserver }}"
+        service_state: started
+        domain: "{{ item.domain }}"
+        admin_user_name: "{{ ad_user }}"
+        admin_password: "{{ ad_password }}"
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: create domain-tunnel
+      na_ontap_domain_tunnel:
+        state: present
+        vserver: "{{ item.vserver[0] }}"
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: create export-policy rule for readonly root volume
+      na_ontap_export_policy_rule:
+        use_rest: always
+        state: present
+        name: default
+        vserver: "{{ item.vserver }}"
+        rule_index: 1
+        client_match: "0.0.0.0/0"
+        ro_rule: any
+        rw_rule: none
+        protocol: nfs
+        <<: *login
+      with_items: "{{ nas_svm_config }}"
+
+    - name: create SVM peers with DR site
+      netapp.ontap.na_ontap_vserver_peer:
+        state: present
+        vserver: "{{ item.vserver }}"
+        peer_vserver: "{{ item.peer_vserver }}"
+        peer_cluster: "{{ item.peer_cluster }}"
+        applications: snapmirror
+        peer_options:
+          hostname: "{{ destclusterip }}"
+          username: "{{ username }}"
+          password: "{{ password }}"
+          https: true
+          validate_certs: false
+        <<: *login
+      with_items: "{{ svm_peers }}"

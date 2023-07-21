@@ -1,0 +1,49 @@
+---
+# Playbook to provision NFS datastore and mount to VMware
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars_prompt:
+    - name: username
+      prompt: enter the username
+      private: no
+    - name: password
+      prompt: enter password
+  vars:
+    login: &login
+      hostname: "{{ hostname }}" # NetApp Cluster IP
+      username: "{{ username }}" # Cluster User
+      password: "{{ password }}" # Cluster Password
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_nfsdatastore.yml
+  tasks:
+    - name: Create Volume
+      na_ontap_volume:
+        state: present
+        name: "{{ item.volume }}"
+        size: 10
+        size_unit: tb
+        vserver: "{{ item.svm }}"
+        aggregate_name: "{{ item.aggr }}"
+        space_guarantee: none
+        percent_snapshot_space: 20
+        volume_security_style: unix
+        snapshot_policy: "{{ item.snapshot_policy }}"
+        junction_path: "/{{ item.volume }}"
+        export_policy: "vmware_{{ vsphere_cluster }}"
+        <<: *login
+      with_items: "{{ datastores }}"
+
+  - name: Get SVM network info
+    na_ontap_info:
+      gather_subset: net_interface_info
+      vserver: "{{ item.svm }}"
+      <<: *login
+    register: nfsip
+  - name: Output Datastore Mountpoints
+    debug:
+      msg: "{{ info.ontap_info.net_interface_info[item].address }}:/{{ item.volume }}"
+    loop: "{{ info.ontap_info.net_interface_info | list}}"
