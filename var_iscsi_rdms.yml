@@ -4,8 +4,14 @@ hostname: 192.168.73.100 # initial cluster name
 username: admin
 password: Netapp1!
 clustername: dm1ncp6000 # Cluster Name
-destclustername: "cluster0300"
-destclusterip: "192.168.73.220"
+drclustername: "cluster0300"
+drclusterip: "192.168.73.220"
 
-iscsi_luns:
-- { vserver: "dm1nvp6001", lun_name: "lun01_test", lun_size: "1", lun_size_unit: "gb", aggr: "dm1ncp6001_FC_1", esx_cluster: "pay01", iqn_names: "iqn.1994-05.com.redhat:scspa0395855001,iqn.1994-05.com.redhat:scspa0395855002", dest_vserver: "siedxxnvp0320", dest_aggr: "cluster0300_01_FC_1", protection_policy: "mirror_vault_sc2" }
+luns:
+- { svm: "dm1nvp6001", lun: "sql01a_db01", lun_size: "1", size_unit: "gb", esx_cluster: "pay01", replicated: 'yes', dr_svm: siedxxnvp0320, schedule: 30min }
+
+igroups:
+- { svm: "dm1nvp6001", esx_cluster: pay01, iqn_names: "iqn.1994-05.com.redhat:scspa0395855001,iqn.1994-05.com.redhat:scspa0395855002" }
+
+dr_igroups:
+- { dr_svm: siedxxnvp0320, esx_cluster: pay01, iqn_names: "iqn.1994-05.com.redhat:drhost1,iqn.1994-05.com.redhat:drhost2" }

@@ -1,0 +1,56 @@
+---
+# NetApp ONTAP create SMB shares
+- hosts: localhost
+  collections:
+    - netapp.ontap
+  gather_facts: false
+#  vars_prompt:
+#    - name: username
+#      prompt: enter the username
+#      private: no
+#    - name: password
+#      prompt: enter password
+  vars:
+    login: &login
+      hostname: "{{ hostname }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+    drlogin: &drlogin
+      hostname: "{{ drclustername }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
+  vars_files:
+    - var_smb_file_shares.yml
+  tasks:
+    - name: 'get svm peer info from cluster'
+      na_ontap_rest_info:
+        <<: *login
+        use_python_keys: true
+        gather_subset:
+          - svm/peers
+        parameters:
+#          svm: "{{ item.vserver }}"
+        fields:
+          - svm.name
+          - peer.svm
+      register: svmpeer_info
+
+    - name: 'print svmpeer_info'   
+      debug:
+        msg: "{{ svmpeer_info }}"
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        dr_svm: "{{ svmpeer_info | json_query(query_svmpeer_info) }}"
+      vars:
+        query_svmpeer_info: "ontap_info.svm_peers.records[*].{ peer_svm: name, svm: svm.name }"
+
+    - name: 'print dr_svm'   
+      debug:
+        msg: "{{ dr_svm }}"
+#       when: '"vserver }}" in dr_svm'
+#      with_items: "{{ smb_file_shares }}"

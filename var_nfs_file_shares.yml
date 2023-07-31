@@ -4,9 +4,11 @@ hostname: 192.168.73.100 # initial cluster name
 username: admin
 password: Netapp1!
 clustername: dm1ncp6000 # Cluster Name
-peer_cluster_name: "cluster0300"
-peer_cluster_mgmt_ip: 192.168.73.220
+drclustername: "cluster0300"
+drclusterip: 192.168.73.220
 
 nfs_file_shares:
-- { vserver: "dm1nfp6001", volume: "nfs01_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "nfs01 share", host_access: "192.168.73.0/24", dest_vserver: "siedxxnfp0320", dest_aggr: "cluster0300_01_FC_1", protection_policy: "mirror_vault_sc2" }
-- { vserver: "dm1nfp6001", volume: "nfs04_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc3_9min", comment: "nfs04 share", host_access: "192.168.73.0/24", dest_vserver: "siedxxnfp0320", dest_aggr: "cluster0300_01_FC_1", protection_policy: "mirror_vault_sc2" }
+- { svm: "dm1nfp6001", volume: "nfs01_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "nfs01 share", host_access: "192.168.73.0/24", dr_svm: "siedxxnfp0320", replicated: 'yes', schedule: 30min }
+- { svm: "dm1nfp6001", volume: "nfs04_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc3_9min", comment: "nfs04 share", host_access: "192.168.73.0/24", dr_svm: "siedxxnfp0320", replicated: 'yes', schedule: 30min }
+- { svm: "dm1nfp6001", volume: "nfs05_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc3_9min", comment: "nfs05 share", host_access: "192.168.73.0/24", dr_svm: "siedxxnfp0320", replicated: 'yes', schedule: 30min }
+- { svm: "dm1nfp6001", volume: "nfs06_test", size: "1", size_unit: "gb", snap_policy: "none", comment: "nfs06 share", host_access: "192.168.73.0/24", dr_svm: "siedxxnfp0320", replicated: 'no' }

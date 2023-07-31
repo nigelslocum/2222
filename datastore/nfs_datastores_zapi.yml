@@ -114,12 +114,11 @@
       vars:
         query_svmpeer_info: "ontap_info.svm_peers.records[*].{ name: name }"
 
-    - name: Create snapmirror destination volume
-      when: replicated_datastore == 'yes'
+    - name: Create snapmirror destination volume for Intellisnap
       na_ontap_volume:
         use_rest: always
         state: present
-        name: "{{ datastore_name + '_m1' }}"
+        name: "{{ datastore_name + '_v1' }}"
         vserver: "{{ dr_svm[0].name }}"
         aggregate_name: "{{ dr_aggregate[0].name }}"
         size: 10
@@ -127,10 +126,36 @@
         type: dp
         space_guarantee: none
         tiering_policy: all
-        comment: "{{ comment }}"
+        comment: "created by ansible for intellisnap"
         <<: *drlogin
 
-    - name: Create and initialise SnapMirror relationship
+    - name: Create and initialise SnapMirror relationship for Intellisnap
+      na_ontap_snapmirror:
+        use_rest: never
+        state: present
+        policy: MirrorAndVault
+        initialize: true
+        source_path: "{{ primary_svm + ':' + datastore_name }}"
+        destination_path: "{{ dr_svm[0].name + ':' + datastore_name + '_v1' }}"
+        <<: *drlogin
+
+    - name: Create snapmirror destination volume for SRM
+      when: replicated_datastore == 'yes'
+      na_ontap_volume:
+        use_rest: always
+        state: present
+        name: "{{ datastore_name + '_m1' }}"
+        vserver: "{{ dr_svm[1].name }}"
+        aggregate_name: "{{ dr_aggregate[1].name }}"
+        size: 10
+        size_unit: tb
+        type: dp
+        space_guarantee: none
+        tiering_policy: all
+        comment: "created by ansible for SRM"
+        <<: *drlogin
+
+    - name: Create and initialise SnapMirror relationship for SRM
       when: replicated_datastore == 'yes'
       na_ontap_snapmirror:
         use_rest: never
@@ -138,7 +163,7 @@
         policy: MirrorLatest
         initialize: true
         source_path: "{{ primary_svm + ':' + datastore_name }}"
-        destination_path: "{{ dr_svm[0].name + ':' + datastore_name + '_m1' }}"
+        destination_path: "{{ dr_svm[1].name + ':' + datastore_name + '_m1' }}"
         schedule: "{{ schedule }}"
         <<: *drlogin
 

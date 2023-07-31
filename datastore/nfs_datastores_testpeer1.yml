@@ -17,9 +17,10 @@
       password: "{{ password }}"
       https: true
       validate_certs: false
-    clustername: dm1ncp6000
+    clustername: 192.168.73.100
     username: admin
     password: Netapp1!
+    drclusterip: 192.168.73.220
     drclustername: cluster0300
     primary_svm: dm1nvp6001
     datastore_name: d85pay_n_shared_sc2_r_common_02
@@ -51,3 +52,7 @@
     - name: 'print drsvm'   
       debug:
         msg: "{{ dr_svm }}"
+
+    - name: 'print  nip svm'   
+      debug:
+        msg: "{{ dr_svm[0].name }}"

@@ -4,9 +4,11 @@ hostname: 192.168.73.100 # initial cluster name
 username: admin
 password: Netapp1!
 clustername: dm1ncp6000 # Cluster Name
-destclustername: "cluster0300"
-destclusterip: "192.168.73.220"
-
+drclustername: "cluster0300"
+drclusterip: 192.168.73.220
+vserver: dm1nfp6001
 smb_file_shares:
-- { vserver: "dm1nfp6001", volume: "smb01_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "smb01 share", dest_vserver: "siedxxnfp0320", dest_aggr: "cluster0300_01_FC_1", protection_policy: "mirror_vault_sc2" }
-- { vserver: "dm1nfp6001", volume: "smb02_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "smb02 share", dest_vserver: "siedxxnfp0320", dest_aggr: "cluster0300_01_FC_1", protection_policy: "mirror_vault_sc2" }
+- { vserver: "dm1nfp6001", volume: "smb01_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "smb01 share", replicated: 'yes', dr_svm: siedxxnfp0320, schedule: 30min }
+- { vserver: "dm1nfp6001", volume: "smb02_test", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "smb02 share", replicated: 'yes', dr_svm: siedxxnfp0320, schedule: 30min }
+- { vserver: "dm1nfp6001", volume: "cifs01", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "cifs01 share", replicated: 'no', dr_svm: siedxxnfp0320, schedule: 30min }
+- { vserver: "dm1nfp6001", volume: "cifs02", size: "1", size_unit: "gb", snap_policy: "vmware_ds_sc2_4min", comment: "cifs01 share", replicated: 'yes', dr_svm: siedxxnfp0320, schedule: 30min }

@@ -17,96 +17,116 @@
       password: "{{ password }}"
       https: true
       validate_certs: false
+    drlogin: &drlogin
+      hostname: "{{ drclusterip }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+      https: true
+      validate_certs: false
   vars_files:
     - var_iscsi_rdms.yml
   tasks:
-    - name: Create volumes to host LUNs
-      na_ontap_volume:
-        use_rest: always
-        state: present
-        name: "{{ item.lun_name }}"
-        vserver: "{{ item.vserver }}"
-        aggregate_name: "{{ item.aggr }}"
-        size: "{{ item.lun_size * 2 }}"
-        size_unit: "{{ item.lun_size_unit }}"
-        space_guarantee: none
-        tiering_policy: none
-        percent_snapshot_space: 0
-        <<: *login        
-      with_items: "{{ iscsi_luns }}"
-
-    - name: create LUNs
-      na_ontap_lun:
-        use_rest: always
-        state: present
-        name: "{{ item.lun_name }}"
-        flexvol_name: "{{ item.lun_name }}"
-        vserver: "{{ item.vserver }}"
-        size: "{{ item.lun_size }}"
-        size_unit: "{{ item.lun_size_unit }}"
-        os_type: vmware
-        space_reserve: false
-        <<: *login        
-      with_items: "{{ iscsi_luns }}"
-
-    - name: create igroup
+    - name: create igroups
       na_ontap_igroup:
         use_rest: always
         state: present
-        vserver: "{{ item.vserver }}"
-        name: "{{ 'vmware_' + item.esx_cluster }}"
+        vserver: "{{ item.svm }}"
+        name: "{{ item.esx_cluster + '_vmware' }}"
         initiator_group_type: iscsi
         os_type: vmware
-        initiator_names: "{{ item.iqn_names }}"
+        initiator_names: "{{ item.iqn_names }}" #comma separated
         <<: *login        
-      with_items: "{{ iscsi_luns }}"
+      with_items: "{{ igroups }}"
+
+    - name: Create LUNs using SAN application
+      na_ontap_lun:
+        state: present
+        name: "{{ item.lun }}"
+        os_type: vmware
+        vserver: "{{ item.svm }}"
+        san_application_template:
+          name: "{{ item.lun }}"
+          igroup_name: "{{ item.esx_cluster + '_vmware' }}"
+          lun_count: 1
+          total_size: "{{ item.lun_size }}"
+          total_size_unit: "{{ item.size_unit }}"
+          protection_type:
+            local_policy: none
+          scope: auto
+          use_san_application: true
+        <<: *login
+      with_items: "{{ luns }}"
 
     - name: map LUNs to igroup
       na_ontap_lun_map:
         use_rest: always
         state: present
-        vserver: "{{ item.vserver }}"
-        initiator_group_name: "{{ 'vmware_' + item.esx_cluster }}"
-        path: "{{ '/vol/' + item.lun_name + '/' + item.lun_name }}"
+        vserver: "{{ item.svm }}"
+        initiator_group_name: "{{ item.esx_cluster + '_vmware' }}"
+        path: "{{ '/vol/' + item.lun + '/' + item.lun }}"
         <<: *login        
-      with_items: "{{ iscsi_luns }}"
+      with_items: "{{ luns }}"
+
+    - name: 'get aggr info for dr cluster'
+      na_ontap_rest_info:
+        <<: *drlogin
+        use_python_keys: true
+        gather_subset:
+          - storage/aggregates
+        parameters:
+          space.block_storage.physical_used_percent: "<85"
+        fields:
+          - 'name'
+          - 'space.block_storage.available'
+      register: dr_aggregate_info
+
+    - name: 'create clean list of dicts from aggregate json'
+      set_fact: 
+        dr_aggregate_clean: "{{ dr_aggregate_info | json_query(query_dr_aggr_info) }}"
+      vars:
+        query_dr_aggr_info: "ontap_info.storage_aggregates.records[*].{ name: name, space_available: space.block_storage.available }"
+
+    - name: 'sort the list by space_available'
+      set_fact:
+        dr_aggregate: "{{ dr_aggregate_clean | sort(attribute='space_available', reverse=true) }}"   
 
     - name: Create snapmirror destination volumes
-      when: item.dest_vserver is defined
+      when: item.replicated == 'yes'
       na_ontap_volume:
         use_rest: always
         state: present
-        name: "{{ item.lun_name + '_dest' }}"
-        vserver: "{{ item.dest_vserver }}"
-        aggregate_name: "{{ item.dest_aggr }}"
+        name: "{{ item.lun + '_m1' }}"
+        vserver: "{{ item.dr_svm }}"
+        aggregate_name: "{{ dr_aggregate[1].name }}"
         size: "{{ item.lun_size * 2 }}"
-        size_unit: "{{ item.lun_size_unit }}"
+        size_unit: "{{ item.size_unit }}"
         type: dp
         space_guarantee: none
         tiering_policy: all
-        hostname: "{{ destclusterip }}"
-        username: "{{ username }}"
-        password: "{{ password }}"
-        https: true
-        validate_certs: false
-      with_items: "{{ iscsi_luns }}"
+        <<: *drlogin 
+      with_items: "{{ luns }}"
 
-    - name: Create and initialise SnapMirror relationships
-      when: item.dest_vserver is defined
+    - name: Create and initialise SnapMirror relationship SC2-3
+      when: item.replicated == 'yes'
       na_ontap_snapmirror:
+        use_rest: never
+        state: present
+        policy: MirrorAndVault
+        initialize: true
+        source_path: "{{ item.svm + ':' + item.lun }}"
+        destination_path: "{{ item.dr_svm + ':' + item.lun + '_m1' }}"
+        schedule: "{{ item.schedule }}"
+        <<: *drlogin
+      with_items: "{{ luns }}"
+
+    - name: create igroups in DR SVM
+      na_ontap_igroup:
         use_rest: always
         state: present
-        policy: "{{ item.protection_policy }}"
-        initialize: true
-        source_endpoint:
-          cluster: "{{ clustername }}"
-          path: "{{ item.vserver + ':' + item.lun_name }}"
-        destination_endpoint:
-           cluster: "{{ destclustername }}"
-           path: "{{ item.dest_vserver + ':' + item.lun_name + '_dest' }}"
-        hostname: "{{ destclusterip }}"
-        username: "{{ username }}"
-        password: "{{ password }}"
-        https: true
-        validate_certs: false
-      with_items: "{{ iscsi_luns }}"
+        vserver: "{{ item.dr_svm }}"
+        name: "{{ item.esx_cluster + '_vmware' }}"
+        initiator_group_type: iscsi
+        os_type: vmware
+        initiator_names: "{{ item.iqn_names }}" #comma separated
+        <<: *drlogin        
+      with_items: "{{ dr_igroups }}"
